@@ -1,11 +1,11 @@
+import os
 import psycopg2
 import hashlib
-import os
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# ✅ Connexion PostgreSQL avec Render (Utilise l'Internal Database URL)
+# ✅ Récupération de l'URL de la base de données depuis Render
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://eshop_user:Idx7b2u8UfXodOCQn3oGHwrzwtyP3CbI@dpg-cv908nin91rc73d5bes0-a/eshop_db_c764")
 
 def get_db():
@@ -47,7 +47,12 @@ def calculate_risk_score(ip_info, refund_count, payment_method):
     risk_score = refund_count * 10
     if payment_method == "crypto":
         risk_score += 20
-    return min(risk_score, 100)  # Le score est plafonné à 100
+    return min(risk_score, 100)  # Score max = 100
+
+# ✅ Route pour la page d'accueil
+@app.route("/")
+def home():
+    return "🚀 API de Détection de Fraude en ligne ! Utilisez `/detect` et `/dashboard`."
 
 # ✅ Route pour détecter la fraude
 @app.route("/detect", methods=["POST"])
@@ -79,7 +84,7 @@ def detect_fraud():
         "risk_score": risk_score
     })
 
-# ✅ Route du tableau de bord des fraudes
+# ✅ Route du tableau de bord des fraudes (Nouveau Design)
 @app.route("/dashboard")
 def dashboard():
     db = get_db()
@@ -90,17 +95,61 @@ def dashboard():
         cursor.close()
         db.close()
 
-        html = "<h1>Tableau de Bord - Détection des Fraudes</h1>"
-        html += "<table border='1'><tr><th>ID</th><th>IP</th><th>User Agent</th><th>Empreinte</th><th>Remboursements</th><th>Risk Score</th><th>Date</th></tr>"
+        html = """
+        <html>
+        <head>
+            <title>Tableau de Bord - Détection des Fraudes</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; background-color: #f4f4f4; }
+                h1 { color: #333; }
+                table { width: 90%; margin: auto; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); }
+                th, td { padding: 12px; border: 1px solid #ddd; text-align: center; }
+                th { background-color: #222; color: white; }
+                .low-risk { background-color: #c8e6c9; color: #2e7d32; font-weight: bold; }  /* 🟢 Vert */
+                .medium-risk { background-color: #ffcc80; color: #e65100; font-weight: bold; } /* 🟠 Orange */
+                .high-risk { background-color: #ef9a9a; color: #b71c1c; font-weight: bold; } /* 🔴 Rouge */
+            </style>
+        </head>
+        <body>
+            <h1>🚀 Tableau de Bord - Détection des Fraudes</h1>
+            <table>
+                <tr>
+                    <th>ID</th><th>IP</th><th>User Agent</th><th>Empreinte</th>
+                    <th>Remboursements</th><th>Risk Score</th><th>Date</th>
+                </tr>
+        """
+
         for user in users:
-            row_color = "red" if user[5] >= 50 else "white"
-            html += f"<tr style='background-color:{row_color}'><td>{user[0]}</td><td>{user[1]}</td><td>{user[2]}</td><td>{user[3][:10]}...</td><td>{user[4]}</td><td>{user[5]}</td><td>{user[6]}</td></tr>"
-        html += "</table>"
+            if user[5] < 30:
+                row_class = "low-risk"  # 🟢 Faible risque
+            elif user[5] < 70:
+                row_class = "medium-risk"  # 🟠 Risque moyen
+            else:
+                row_class = "high-risk"  # 🔴 Risque élevé
+
+            html += f"""
+            <tr class='{row_class}'>
+                <td>{user[0]}</td>
+                <td>{user[1]}</td>
+                <td>{user[2][:30]}...</td>
+                <td>{user[3][:10]}...</td>
+                <td>{user[4]}</td>
+                <td>{user[5]}</td>
+                <td>{user[6]}</td>
+            </tr>
+            """
+
+        html += """
+            </table>
+        </body>
+        </html>
+        """
         return html
     else:
         return "❌ Impossible de se connecter à la base de données."
 
-# ✅ Lancer l’application
+# ✅ Lancer l’application avec le port Render
 if __name__ == "__main__":
     create_tables()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 10000))  # Utilise le port attribué par Render
+    app.run(host="0.0.0.0", port=port, debug=True)
