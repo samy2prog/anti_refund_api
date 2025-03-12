@@ -1,103 +1,106 @@
-from flask import Flask, request, jsonify, render_template
 import psycopg2
 import hashlib
 import os
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# 🔹 Configuration PostgreSQL sur Render
-DATABASE_URL = "postgresql://eshop_user:Idx7b2u8UfXodOCQn3oGHwrzwtyP3CbI@dpg-cv908nin91rc73d5bes0-a.internal/render.com/eshop_db_c764"
+# ✅ Connexion PostgreSQL avec Render (Utilise l'Internal Database URL)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://eshop_user:Idx7b2u8UfXodOCQn3oGHwrzwtyP3CbI@dpg-cv908nin91rc73d5bes0-a/eshop_db_c764")
 
 def get_db():
-    """Connexion à la base PostgreSQL"""
-    conn = psycopg2.connect(DATABASE_URL)
-    return conn
+    """Connexion à PostgreSQL"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except psycopg2.OperationalError as e:
+        print("❌ ERREUR DE CONNEXION À POSTGRESQL :", e)
+        return None
 
-# 🔹 Création des tables dans PostgreSQL
+# ✅ Création des tables si elles n'existent pas
 def create_tables():
     db = get_db()
-    cursor = db.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            ip TEXT,
-            user_agent TEXT,
-            fingerprint TEXT UNIQUE,
-            refund_count INTEGER DEFAULT 0,
-            risk_score INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    db.commit()
-    cursor.close()
-    db.close()
+    if db:
+        cursor = db.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                ip TEXT NOT NULL,
+                user_agent TEXT NOT NULL,
+                fingerprint TEXT UNIQUE NOT NULL,
+                refund_count INTEGER DEFAULT 0,
+                risk_score INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        db.commit()
+        cursor.close()
+        db.close()
+        print("✅ Tables créées avec succès.")
 
-create_tables()
-
+# ✅ Générer une empreinte utilisateur unique
 def generate_fingerprint(user_agent, ip):
-    """Génère une empreinte unique de l'utilisateur"""
-    fingerprint = hashlib.sha256(f"{user_agent}{ip}".encode()).hexdigest()
-    return fingerprint
+    return hashlib.sha256(f"{user_agent}{ip}".encode()).hexdigest()
 
-def calculate_risk_score(refund_count, payment_method):
-    """Calcule un score de risque basé sur le nombre de remboursements et la méthode de paiement"""
-    risk_score = refund_count * 10  # Chaque remboursement ajoute 10 points de risque
+# ✅ Calcul du score de risque
+def calculate_risk_score(ip_info, refund_count, payment_method):
+    risk_score = refund_count * 10
     if payment_method == "crypto":
-        risk_score += 20  # Paiements en crypto sont plus risqués
-    return min(risk_score, 100)  # Score max = 100
+        risk_score += 20
+    return min(risk_score, 100)  # Le score est plafonné à 100
 
+# ✅ Route pour détecter la fraude
 @app.route("/detect", methods=["POST"])
 def detect_fraud():
-    """Détecte si une commande est frauduleuse"""
     data = request.json
-    ip = data["ip"]
-    user_agent = data["user_agent"]
-    payment_method = data["payment_method"]
-    refund_count = data["refund_count"]
+    ip = data.get("ip")
+    user_agent = data.get("user_agent")
+    payment_method = data.get("payment_method")
+    refund_count = data.get("refund_count", 0)
 
     fingerprint = generate_fingerprint(user_agent, ip)
+    risk_score = calculate_risk_score(ip, refund_count, payment_method)
 
     db = get_db()
-    cursor = db.cursor()
-    
-    # Vérifier si l'utilisateur existe déjà
-    cursor.execute("SELECT refund_count FROM users WHERE fingerprint = %s", (fingerprint,))
-    user = cursor.fetchone()
-
-    if user:
-        refund_count += user[0]  # Ajoute les remboursements existants
-
-    risk_score = calculate_risk_score(refund_count, payment_method)
-
-    if user:
-        cursor.execute("UPDATE users SET refund_count = %s, risk_score = %s WHERE fingerprint = %s",
-                       (refund_count, risk_score, fingerprint))
-    else:
+    if db:
+        cursor = db.cursor()
         cursor.execute("""
             INSERT INTO users (ip, user_agent, fingerprint, refund_count, risk_score)
             VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (fingerprint) DO UPDATE
+            SET refund_count = users.refund_count + 1, risk_score = EXCLUDED.risk_score
         """, (ip, user_agent, fingerprint, refund_count, risk_score))
-
-    db.commit()
-    cursor.close()
-    db.close()
+        db.commit()
+        cursor.close()
+        db.close()
 
     return jsonify({
         "fingerprint": fingerprint,
         "risk_score": risk_score
     })
 
+# ✅ Route du tableau de bord des fraudes
 @app.route("/dashboard")
 def dashboard():
-    """Affiche le tableau de bord avec la liste des fraudes enregistrées"""
     db = get_db()
-    cursor = db.cursor()
-    cursor.execute("SELECT id, ip, user_agent, fingerprint, refund_count, risk_score, created_at FROM users ORDER BY risk_score DESC")
-    users = cursor.fetchall()
-    cursor.close()
-    db.close()
-    
-    return render_template("dashboard.html", users=users)
+    if db:
+        cursor = db.cursor()
+        cursor.execute("SELECT id, ip, user_agent, fingerprint, refund_count, risk_score, created_at FROM users ORDER BY risk_score DESC")
+        users = cursor.fetchall()
+        cursor.close()
+        db.close()
 
+        html = "<h1>Tableau de Bord - Détection des Fraudes</h1>"
+        html += "<table border='1'><tr><th>ID</th><th>IP</th><th>User Agent</th><th>Empreinte</th><th>Remboursements</th><th>Risk Score</th><th>Date</th></tr>"
+        for user in users:
+            row_color = "red" if user[5] >= 50 else "white"
+            html += f"<tr style='background-color:{row_color}'><td>{user[0]}</td><td>{user[1]}</td><td>{user[2]}</td><td>{user[3][:10]}...</td><td>{user[4]}</td><td>{user[5]}</td><td>{user[6]}</td></tr>"
+        html += "</table>"
+        return html
+    else:
+        return "❌ Impossible de se connecter à la base de données."
+
+# ✅ Lancer l’application
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    create_tables()
+    app.run(host="0.0.0.0", port=5000, debug=True)
