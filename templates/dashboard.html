@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tableau de Bord - Détection des Fraudes</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid black; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .high-risk { background-color: #ffcccc; }  /* Rouge pour risques élevés */
+        .medium-risk { background-color: #ffeb99; } /* Jaune pour risques moyens */
+        .low-risk { background-color: #ccffcc; }  /* Vert pour faibles risques */
+        input { margin-bottom: 10px; padding: 8px; width: 300px; border: 1px solid #ccc; border-radius: 5px; }
+    </style>
+    <script>
+        function searchIP() {
+            let input = document.getElementById("search").value.toLowerCase();
+            let table = document.getElementById("fraudTable");
+            let rows = table.getElementsByTagName("tr");
+
+            for (let i = 1; i < rows.length; i++) {  // Ignorer l'en-tête
+                let ip = rows[i].getElementsByTagName("td")[1];  // Colonne de l'IP
+                if (ip) {
+                    let ipText = ip.textContent || ip.innerText;
+                    rows[i].style.display = ipText.toLowerCase().includes(input) ? "" : "none";
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>🚨 Tableau de Bord - Détection des Fraudes</h1>
+
+    <!-- Champ de recherche -->
+    <input type="text" id="search" onkeyup="searchIP()" placeholder="🔎 Rechercher une IP...">
+
+    {% if users %}
+        <table id="fraudTable">
+            <tr>
+                <th>ID</th>
+                <th>IP</th>
+                <th>User Agent</th>
+                <th>Empreinte</th>
+                <th>Remboursements</th>
+                <th>Risk Score</th>
+                <th>Date</th>
+            </tr>
+            {% for user in users %}
+            <tr class="{% if user[5] >= 80 %}high-risk{% elif user[5] >= 40 %}medium-risk{% else %}low-risk{% endif %}">
+                <td>{{ user[0] }}</td>
+                <td>{{ user[1] }}</td>
+                <td>{{ user[2] }}</td>
+                <td>{{ user[3][:10] }}...</td>  <!-- Raccourcir l'empreinte -->
+                <td>{{ user[4] }}</td>
+                <td>{{ user[5] }}</td>
+                <td>{{ user[6] }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>Aucune fraude détectée pour l’instant.</p>
+    {% endif %}
+</body>
+</html>
+
