@@ -1,93 +1,120 @@
-import os
-import psycopg2
 from flask import Flask, request, jsonify, render_template
+import psycopg2
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 
-# ✅ Connexion PostgreSQL (Remplace par ton URL correcte)
-DATABASE_URL = "postgresql://eshop_db_d9qc_user:6IoPk0zWxCmDL9EEQshbWrmK54bdfced@dpg-cv93lh1u0jms73eevl00-a.frankfurt-postgres.render.com/eshop_db_d9qc"
+# Connexion à la base de données
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://eshop_db_d9qc_user:6IoPk0zWxCmDL9EEQshbWrmK54bdfced@dpg-cv93lh1u0jms73eevl00-a.frankfurt-postgres.render.com/eshop_db_d9qc")
 
-def get_db():
-    """Connexion à PostgreSQL"""
+def connect_db():
     try:
-        print("🔗 Connexion à PostgreSQL...")
         conn = psycopg2.connect(DATABASE_URL)
-        print("✅ Connexion réussie !")
         return conn
-    except psycopg2.OperationalError as e:
-        print("❌ ERREUR DE CONNEXION À POSTGRESQL :", e)
+    except Exception as e:
+        print(f"❌ ERREUR DE CONNEXION À POSTGRESQL : {e}")
         return None
 
-# ✅ Route : Tableau de bord des fraudes
-@app.route("/dashboard")
-def dashboard():
-    db = get_db()
-    if db:
-        cursor = db.cursor()
-        cursor.execute("""
-            SELECT id, ip, user_agent, refund_count, 
-                   CAST(risk_score AS INTEGER) AS risk_score, 
-                   TO_CHAR(created_at, 'DD-MM-YYYY HH24:MI:SS') AS created_at
-            FROM users
-            ORDER BY created_at DESC
-        """)
-        users = cursor.fetchall()
-        cursor.close()
-        db.close()
-
-        print("📊 Données chargées dans le dashboard:", users)  # Debug
-        return render_template("dashboard.html", users=users)
-    else:
-        return "❌ Impossible de se connecter à la base de données.", 500
-
-# ✅ Enregistrement d'un achat
+# ✅ Route pour enregistrer une commande
 @app.route("/buy", methods=["POST"])
 def buy():
+    data = request.get_json()
+    product_name = data.get("product_name")
+    payment_method = data.get("payment_method")
+
+    if not product_name or not payment_method:
+        return jsonify({"error": "Données incomplètes"}), 400
+
+    ip_address = request.remote_addr  # ✅ Récupération IP
+    user_agent = request.headers.get("User-Agent", "Inconnu")
+
+    print(f"📡 IP récupérée : {ip_address} | User-Agent : {user_agent}")  # Debug
+
+    conn = connect_db()
+    if not conn:
+        return jsonify({"error": "Impossible de se connecter à la base de données"}), 500
+    
+    cur = conn.cursor()
+
     try:
-        data = request.json
-        print("📥 Achat reçu:", data)  # ✅ Debug
+        # ✅ Enregistrement de la commande
+        cur.execute(
+            "INSERT INTO orders (product_name, ip, user_agent, payment_method, created_at) VALUES (%s, %s, %s, %s, NOW()) RETURNING id",
+            (product_name, ip_address, user_agent, payment_method)
+        )
+        order_id = cur.fetchone()[0]
+        conn.commit()
 
-        product_name = data.get("product_name")
-        payment_method = data.get("payment_method")
-        user_ip = request.remote_addr
-        user_agent = request.headers.get("User-Agent")
-        created_at = datetime.utcnow()  # ✅ Format correct
+        # ✅ Vérification si l'utilisateur existe déjà
+        cur.execute("SELECT id FROM users WHERE ip = %s", (ip_address,))
+        user = cur.fetchone()
 
-        db = get_db()
-        if db:
-            cursor = db.cursor()
-            cursor.execute("""
-                INSERT INTO orders (product_name, ip, user_agent, payment_method, created_at)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (product_name, user_ip, user_agent, payment_method, created_at))
+        if not user:
+            # ✅ Ajout d'un nouvel utilisateur
+            print(f"📊 Ajout utilisateur : IP={ip_address}, User-Agent={user_agent}, Payment={payment_method}")
+            cur.execute(
+                "INSERT INTO users (ip, user_agent, fingerprint, refund_count, risk_score, created_at) VALUES (%s, %s, %s, %s, %s, NOW())",
+                (ip_address, user_agent, "default_fingerprint", 0, 10)  # Risk Score par défaut à 10
+            )
+            conn.commit()
 
-            db.commit()
-            cursor.close()
-            db.close()
+        cur.close()
+        conn.close()
 
-        return jsonify({"message": "Achat enregistré"})
+        return jsonify({"message": "Commande enregistrée avec succès", "order_id": order_id}), 201
 
     except Exception as e:
-        print("❌ Erreur API achat:", e)
+        conn.rollback()
+        print(f"❌ ERREUR INSERTION : {e}")
         return jsonify({"error": str(e)}), 500
 
-# ✅ Vérification connexion PostgreSQL
-@app.route("/test-db")
-def test_db():
+# ✅ Route pour demander un remboursement
+@app.route("/refund", methods=["POST"])
+def refund():
+    data = request.get_json()
+    order_id = data.get("order_id")
+
+    if not order_id:
+        return jsonify({"error": "ID de commande manquant"}), 400
+
+    conn = connect_db()
+    if not conn:
+        return jsonify({"error": "Impossible de se connecter à la base de données"}), 500
+    
+    cur = conn.cursor()
+
     try:
-        db = get_db()
-        if db:
-            cursor = db.cursor()
-            cursor.execute("SELECT 1")
-            cursor.close()
-            db.close()
-            return "✅ Connexion à PostgreSQL réussie !"
-        else:
-            return "❌ Impossible de se connecter à PostgreSQL"
+        cur.execute(
+            "INSERT INTO refunds (order_id, status, created_at) VALUES (%s, 'En attente', NOW())",
+            (order_id,)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({"message": "Remboursement demandé avec succès"}), 201
+
     except Exception as e:
-        return f"❌ Erreur PostgreSQL : {e}"
+        conn.rollback()
+        print(f"❌ ERREUR REMBOURSEMENT : {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ✅ Route du Dashboard
+@app.route("/dashboard")
+def dashboard():
+    conn = connect_db()
+    if not conn:
+        return "Erreur de connexion à la base de données", 500
+
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users ORDER BY created_at DESC")
+    users = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return render_template("dashboard.html", users=users)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
