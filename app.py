@@ -131,10 +131,8 @@ def dashboard():
     if db:
         cursor = db.cursor()
         cursor.execute("""
-            SELECT u.id, u.ip, u.user_agent, u.refund_count, u.risk_score, u.created_at, 
-                   COALESCE(o.product_name, 'N/A') AS product_name, COALESCE(o.refund_requested, FALSE) AS refund_requested
+            SELECT u.id, u.ip, u.user_agent, u.refund_count, u.risk_score, u.created_at
             FROM users u
-            LEFT JOIN orders o ON u.ip = o.ip
             ORDER BY u.created_at DESC
         """)
         users = cursor.fetchall()
