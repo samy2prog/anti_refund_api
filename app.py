@@ -111,7 +111,7 @@ def dashboard():
     if db:
         cursor = db.cursor()
         cursor.execute("""
-            SELECT id, ip, user_agent, refund_count, risk_score, created_at
+            SELECT id, ip, user_agent, refund_count, CAST(risk_score AS INTEGER), created_at
             FROM users
             ORDER BY created_at DESC
         """)
