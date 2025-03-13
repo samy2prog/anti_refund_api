@@ -21,7 +21,7 @@ def get_db():
         print("❌ ERREUR DE CONNEXION À POSTGRESQL :", e)
         return None
 
-# ✅ Analyse l'IP avec ipinfo.io
+# ✅ Analyse de l'IP avec ipinfo.io
 def analyze_ip(ip):
     try:
         response = requests.get(f"https://ipinfo.io/{ip}?token={IPINFO_TOKEN}")
@@ -36,20 +36,20 @@ def analyze_ip(ip):
         print(f"❌ Erreur lors de l'analyse IP : {e}")
         return None
 
-# ✅ Calcul du score de risque amélioré
+# ✅ Calcul du score de risque
 def calculate_risk_score(refund_count, payment_method, ip_info):
-    risk_score = refund_count * 20  # 🔹 Augmente le risque pour chaque remboursement
+    risk_score = refund_count * 20  # 🔹 Plus de remboursements = plus de risque
 
     if payment_method == "crypto":
         risk_score += 30  # 🔹 Les paiements anonymes sont plus risqués
 
     if ip_info["is_proxy"]:
-        risk_score += 40  # 🔹 Les proxys et VPN sont souvent utilisés pour la fraude
+        risk_score += 40  # 🔹 Détection d'un VPN ou Proxy
 
     if ip_info["country"] not in ["FR", "DE", "US"]:  # 🔹 Pays moins sûrs
         risk_score += 15
 
-    return min(risk_score, 100)
+    return min(risk_score, 100)  # 🔹 Score max = 100
 
 # ✅ Enregistrer un achat et mettre à jour `users`
 @app.route("/buy", methods=["POST"])
@@ -103,6 +103,25 @@ def buy():
     except Exception as e:
         print("❌ Erreur API achat:", e)
         return jsonify({"error": str(e)}), 500
+
+# ✅ Afficher le dashboard
+@app.route("/dashboard")
+def dashboard():
+    db = get_db()
+    if db:
+        cursor = db.cursor()
+        cursor.execute("""
+            SELECT id, ip, user_agent, refund_count, risk_score, created_at
+            FROM users
+            ORDER BY created_at DESC
+        """)
+        users = cursor.fetchall()
+        cursor.close()
+        db.close()
+
+        return render_template("dashboard.html", users=users)
+    else:
+        return "❌ Impossible de se connecter à la base de données.", 500
 
 # ✅ Tester la connexion à la base de données
 @app.route("/test-db")
