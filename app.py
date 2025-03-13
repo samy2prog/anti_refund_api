@@ -21,103 +21,24 @@ def get_db():
         print("❌ ERREUR DE CONNEXION À POSTGRESQL :", e)
         return None
 
-# ✅ Analyse de l'IP avec ipinfo.io
-def analyze_ip(ip):
-    try:
-        response = requests.get(f"https://ipinfo.io/{ip}?token={IPINFO_TOKEN}")
-        data = response.json()
-        return {
-            "country": data.get("country", "Unknown"),
-            "city": data.get("city", "Unknown"),
-            "isp": data.get("org", "Unknown"),
-            "is_proxy": "proxy" in data.get("privacy", {})
-        }
-    except Exception as e:
-        print(f"❌ Erreur lors de l'analyse IP : {e}")
-        return None
-
-# ✅ Calcul du score de risque
-def calculate_risk_score(refund_count, payment_method, ip_info):
-    risk_score = refund_count * 20  # 🔹 Plus de remboursements = plus de risque
-
-    if payment_method == "crypto":
-        risk_score += 30  # 🔹 Les paiements anonymes sont plus risqués
-
-    if ip_info["is_proxy"]:
-        risk_score += 40  # 🔹 Détection d'un VPN ou Proxy
-
-    if ip_info["country"] not in ["FR", "DE", "US"]:  # 🔹 Pays moins sûrs
-        risk_score += 15
-
-    return min(risk_score, 100)  # 🔹 Score max = 100
-
-# ✅ Enregistrer un achat et mettre à jour `users`
-@app.route("/buy", methods=["POST"])
-def buy():
-    try:
-        data = request.json
-        print("📥 Achat reçu:", data)  # ✅ Debug
-
-        product_name = data.get("product_name")
-        payment_method = data.get("payment_method")
-        user_ip = request.remote_addr
-        user_agent = request.headers.get("User-Agent")
-        created_at = datetime.utcnow()
-
-        ip_info = analyze_ip(user_ip)  # 🔍 Analyse de l'IP
-
-        db = get_db()
-        if db:
-            cursor = db.cursor()
-
-            # ✅ Insérer l'achat dans `orders`
-            cursor.execute("""
-                INSERT INTO orders (product_name, ip, user_agent, payment_method, created_at)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (product_name, user_ip, user_agent, payment_method, created_at))
-
-            # ✅ Vérifier si l'utilisateur existe déjà
-            cursor.execute("SELECT refund_count FROM users WHERE ip = %s", (user_ip,))
-            result = cursor.fetchone()
-            refund_count = result[0] if result else 0
-
-            # ✅ Calcul du risque
-            risk_score = calculate_risk_score(refund_count, payment_method, ip_info)
-
-            # ✅ Insérer ou mettre à jour `users`
-            cursor.execute("""
-                INSERT INTO users (ip, user_agent, refund_count, risk_score, created_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (ip) DO UPDATE
-                SET refund_count = users.refund_count, risk_score = EXCLUDED.risk_score, created_at = EXCLUDED.created_at
-            """, (user_ip, user_agent, refund_count, risk_score, created_at))
-
-            db.commit()
-            cursor.close()
-            db.close()
-
-            print(f"✅ Utilisateur {user_ip} ajouté ou mis à jour avec risk_score = {risk_score}")
-
-        return jsonify({"message": "Achat enregistré", "risk_score": risk_score, "ip_info": ip_info})
-
-    except Exception as e:
-        print("❌ Erreur API achat:", e)
-        return jsonify({"error": str(e)}), 500
-
-# ✅ Afficher le dashboard
+# ✅ Correction du dashboard avec `risk_score` bien en int
 @app.route("/dashboard")
 def dashboard():
     db = get_db()
     if db:
         cursor = db.cursor()
         cursor.execute("""
-            SELECT id, ip, user_agent, refund_count, CAST(risk_score AS INTEGER), created_at
+            SELECT id, ip, user_agent, refund_count, 
+                   CAST(risk_score AS INTEGER) AS risk_score, 
+                   created_at
             FROM users
             ORDER BY created_at DESC
         """)
         users = cursor.fetchall()
         cursor.close()
         db.close()
+
+        print("📊 Données chargées dans le dashboard:", users)  # Debug
 
         return render_template("dashboard.html", users=users)
     else:
@@ -142,3 +63,4 @@ def test_db():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
