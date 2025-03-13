@@ -5,7 +5,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# ✅ Connexion PostgreSQL (Mets ici ton bon URL)
+# ✅ Connexion PostgreSQL (Remplace par ton URL correcte)
 DATABASE_URL = "postgresql://eshop_db_d9qc_user:6IoPk0zWxCmDL9EEQshbWrmK54bdfced@dpg-cv93lh1u0jms73eevl00-a.frankfurt-postgres.render.com/eshop_db_d9qc"
 
 def get_db():
@@ -28,7 +28,7 @@ def dashboard():
         cursor.execute("""
             SELECT id, ip, user_agent, refund_count, 
                    CAST(risk_score AS INTEGER) AS risk_score, 
-                   created_at
+                   TO_CHAR(created_at, 'DD-MM-YYYY HH24:MI:SS') AS created_at
             FROM users
             ORDER BY created_at DESC
         """)
