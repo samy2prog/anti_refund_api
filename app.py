@@ -6,7 +6,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# ✅ Connexion à PostgreSQL
+# ✅ Configuration de la base de données
 DATABASE_URL = "postgresql://eshop_db_d9qc_user:6IoPk0zWxCmDL9EEQshbWrmK54bdfced@dpg-cv93lh1u0jms73eevl00-a.frankfurt-postgres.render.com/eshop_db_d9qc"
 IPINFO_TOKEN = "93b78ea229f200"  # 🔹 Remplace par ton vrai token ipinfo.io
 
@@ -21,7 +21,7 @@ def get_db():
         print("❌ ERREUR DE CONNEXION À POSTGRESQL :", e)
         return None
 
-# ✅ Correction du dashboard avec `risk_score` bien en int
+# ✅ Route principale : Tableau de bord
 @app.route("/dashboard")
 def dashboard():
     db = get_db()
@@ -44,7 +44,38 @@ def dashboard():
     else:
         return "❌ Impossible de se connecter à la base de données.", 500
 
-# ✅ Tester la connexion à la base de données
+# ✅ Enregistrement d'un achat
+@app.route("/buy", methods=["POST"])
+def buy():
+    try:
+        data = request.json
+        print("📥 Achat reçu:", data)  # ✅ Debug
+
+        product_name = data.get("product_name")
+        payment_method = data.get("payment_method")
+        user_ip = request.remote_addr
+        user_agent = request.headers.get("User-Agent")
+        created_at = datetime.utcnow()  # ✅ Format correct
+
+        db = get_db()
+        if db:
+            cursor = db.cursor()
+            cursor.execute("""
+                INSERT INTO orders (product_name, ip, user_agent, payment_method, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (product_name, user_ip, user_agent, payment_method, created_at))
+
+            db.commit()
+            cursor.close()
+            db.close()
+
+        return jsonify({"message": "Achat enregistré"})
+
+    except Exception as e:
+        print("❌ Erreur API achat:", e)
+        return jsonify({"error": str(e)}), 500
+
+# ✅ Vérification connexion PostgreSQL
 @app.route("/test-db")
 def test_db():
     try:
@@ -63,4 +94,3 @@ def test_db():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
