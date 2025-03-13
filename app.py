@@ -1,12 +1,14 @@
 import os
 import psycopg2
+import requests
 from flask import Flask, request, jsonify, render_template
 from datetime import datetime
 
 app = Flask(__name__)
 
-# ✅ Connexion à PostgreSQL (EXTERNAL DATABASE URL pour Render)
+# ✅ Connexion à PostgreSQL
 DATABASE_URL = "postgresql://eshop_db_d9qc_user:6IoPk0zWxCmDL9EEQshbWrmK54bdfced@dpg-cv93lh1u0jms73eevl00-a.frankfurt-postgres.render.com/eshop_db_d9qc"
+IPINFO_TOKEN = "93b78ea229f200"  # 🔹 Remplace par ton vrai token ipinfo.io
 
 def get_db():
     """Connexion à PostgreSQL"""
@@ -19,21 +21,32 @@ def get_db():
         print("❌ ERREUR DE CONNEXION À POSTGRESQL :", e)
         return None
 
-# ✅ Algorithme avancé de calcul du risque
-def calculate_risk_score(refund_count, payment_method, ip, recent_purchases):
-    risk_score = 0
+# ✅ Analyse l'IP avec ipinfo.io
+def analyze_ip(ip):
+    try:
+        response = requests.get(f"https://ipinfo.io/{ip}?token={IPINFO_TOKEN}")
+        data = response.json()
+        return {
+            "country": data.get("country", "Unknown"),
+            "city": data.get("city", "Unknown"),
+            "isp": data.get("org", "Unknown"),
+            "is_proxy": "proxy" in data.get("privacy", {})
+        }
+    except Exception as e:
+        print(f"❌ Erreur lors de l'analyse IP : {e}")
+        return None
 
-    if refund_count >= 2:
-        risk_score += 40
+# ✅ Calcul du score de risque amélioré
+def calculate_risk_score(refund_count, payment_method, ip_info):
+    risk_score = refund_count * 20  # 🔹 Augmente le risque pour chaque remboursement
 
     if payment_method == "crypto":
-        risk_score += 30
+        risk_score += 30  # 🔹 Les paiements anonymes sont plus risqués
 
-    risky_ips = ["123.45.67.89", "98.76.54.32"]  # Exemple d'IP suspectes
-    if ip in risky_ips:
-        risk_score += 25
+    if ip_info["is_proxy"]:
+        risk_score += 40  # 🔹 Les proxys et VPN sont souvent utilisés pour la fraude
 
-    if recent_purchases >= 3:
+    if ip_info["country"] not in ["FR", "DE", "US"]:  # 🔹 Pays moins sûrs
         risk_score += 15
 
     return min(risk_score, 100)
@@ -51,6 +64,8 @@ def buy():
         user_agent = request.headers.get("User-Agent")
         created_at = datetime.utcnow()
 
+        ip_info = analyze_ip(user_ip)  # 🔍 Analyse de l'IP
+
         db = get_db()
         if db:
             cursor = db.cursor()
@@ -66,12 +81,8 @@ def buy():
             result = cursor.fetchone()
             refund_count = result[0] if result else 0
 
-            # ✅ Vérifier les achats récents
-            cursor.execute("SELECT COUNT(*) FROM orders WHERE ip = %s AND created_at > NOW() - INTERVAL '1 hour'", (user_ip,))
-            recent_purchases = cursor.fetchone()[0]
-
             # ✅ Calcul du risque
-            risk_score = calculate_risk_score(refund_count, payment_method, user_ip, recent_purchases)
+            risk_score = calculate_risk_score(refund_count, payment_method, ip_info)
 
             # ✅ Insérer ou mettre à jour `users`
             cursor.execute("""
@@ -87,61 +98,11 @@ def buy():
 
             print(f"✅ Utilisateur {user_ip} ajouté ou mis à jour avec risk_score = {risk_score}")
 
-        return jsonify({"message": "Achat enregistré", "risk_score": risk_score})
+        return jsonify({"message": "Achat enregistré", "risk_score": risk_score, "ip_info": ip_info})
 
     except Exception as e:
         print("❌ Erreur API achat:", e)
         return jsonify({"error": str(e)}), 500
-
-# ✅ Enregistrer une demande de remboursement
-@app.route("/refund/<int:order_id>")
-def request_refund(order_id):
-    try:
-        db = get_db()
-        if db:
-            cursor = db.cursor()
-
-            # ✅ Marquer la commande comme remboursée
-            cursor.execute("UPDATE orders SET refund_requested = TRUE WHERE id = %s", (order_id,))
-            cursor.execute("SELECT ip FROM orders WHERE id = %s", (order_id,))
-            user_ip = cursor.fetchone()[0]
-
-            # ✅ Mettre à jour le compte utilisateur
-            cursor.execute("SELECT refund_count FROM users WHERE ip = %s", (user_ip,))
-            result = cursor.fetchone()
-            refund_count = result[0] + 1 if result else 1
-            risk_score = refund_count * 20  # Augmentation du risque après remboursement
-
-            cursor.execute("UPDATE users SET refund_count = %s, risk_score = %s WHERE ip = %s", (refund_count, risk_score, user_ip))
-
-            db.commit()
-            cursor.close()
-            db.close()
-
-        return jsonify({"message": "Remboursement enregistré", "risk_score": risk_score})
-
-    except Exception as e:
-        print("❌ Erreur API remboursement:", e)
-        return jsonify({"error": str(e)}), 500
-
-# ✅ Affichage du Dashboard
-@app.route("/dashboard")
-def dashboard():
-    db = get_db()
-    if db:
-        cursor = db.cursor()
-        cursor.execute("""
-            SELECT u.id, u.ip, u.user_agent, u.refund_count, u.risk_score, u.created_at
-            FROM users u
-            ORDER BY u.created_at DESC
-        """)
-        users = cursor.fetchall()
-        cursor.close()
-        db.close()
-
-        return render_template("dashboard.html", users=users)
-    else:
-        return "❌ Impossible de se connecter à la base de données."
 
 # ✅ Tester la connexion à la base de données
 @app.route("/test-db")
