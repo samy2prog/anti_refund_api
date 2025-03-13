@@ -3,40 +3,74 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tableau de bord - Détection des fraudes</title>
+    <title>Dashboard - Détection de Fraude</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border: 1px solid black; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .high-risk { background-color: #ffcccc; }
-        .medium-risk { background-color: #ffeb99; }
-        .low-risk { background-color: #ccffcc; }
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f8f9fa;
+            text-align: center;
+        }
+        h1 {
+            color: #333;
+        }
+        table {
+            width: 90%;
+            margin: 20px auto;
+            border-collapse: collapse;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        th, td {
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+        }
+        .high-risk {
+            background-color: #ff4d4d;
+            color: white;
+        }
+        .medium-risk {
+            background-color: #ffa500;
+            color: white;
+        }
+        .low-risk {
+            background-color: #28a745;
+            color: white;
+        }
     </style>
 </head>
 <body>
-    <h1>🚨 Tableau de Bord - Détection des Fraudes</h1>
+
+    <h1>📊 Tableau de Bord - Détection de Fraude</h1>
+
     <table>
-        <tr>
-            <th>ID</th>
-            <th>IP</th>
-            <th>User Agent</th>
-            <th>Empreinte</th>
-            <th>Remboursements</th>
-            <th>Risk Score</th>
-            <th>Date</th>
-        </tr>
-        {% for user in users %}
-        <tr class="{% if user[5] >= 80 %}high-risk{% elif user[5] >= 40 %}medium-risk{% else %}low-risk{% endif %}">
-            <td>{{ user[0] }}</td>
-            <td>{{ user[1] }}</td>
-            <td>{{ user[2] }}</td>
-            <td>{{ user[3][:10] }}...</td>
-            <td>{{ user[4] }}</td>
-            <td>{{ user[5] }}</td>
-            <td>{{ user[6] }}</td>
-        </tr>
-        {% endfor %}
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Adresse IP</th>
+                <th>User Agent</th>
+                <th>Demandes de remboursement</th>
+                <th>Score de risque</th>
+                <th>Date et Heure</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in users %}
+            <tr class="{% if user[4] >= 80 %}high-risk{% elif user[4] >= 40 %}medium-risk{% else %}low-risk{% endif %}">
+                <td>{{ user[0] }}</td>
+                <td>{{ user[1] }}</td>
+                <td>{{ user[2] }}</td>
+                <td>{{ user[3] }}</td>
+                <td>{{ user[4] }}</td>
+                <td>{{ user[5].strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
     </table>
+
 </body>
 </html>
