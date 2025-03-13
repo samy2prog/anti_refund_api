@@ -27,7 +27,7 @@ def calculate_risk_score(refund_count, payment_method, ip, recent_purchases, mul
     if payment_method == "crypto":
         risk_score += 30
 
-    risky_ips = ["123.45.67.89", "98.76.54.32"]
+    risky_ips = ["123.45.67.89", "98.76.54.32"]  # Exemple d'IP suspectes
     if ip in risky_ips:
         risk_score += 25
 
@@ -39,7 +39,7 @@ def calculate_risk_score(refund_count, payment_method, ip, recent_purchases, mul
 
     return min(risk_score, 100)
 
-# ✅ Enregistrer un achat et le lier au dashboard
+# ✅ Enregistrer un achat et mettre à jour `users`
 @app.route("/buy", methods=["POST"])
 def buy():
     data = request.json
@@ -66,21 +66,21 @@ def buy():
         cursor.execute("SELECT COUNT(DISTINCT ip) FROM users WHERE ip = %s", (user_ip,))
         multiple_accounts = cursor.fetchone()[0] > 1
 
-        # ✅ Récupérer le `refund_count`
+        # ✅ Vérifier si l'utilisateur est déjà dans `users`
         cursor.execute("SELECT refund_count FROM users WHERE ip = %s", (user_ip,))
-        refund_data = cursor.fetchone()
-        refund_count = refund_data[0] if refund_data else 0
+        result = cursor.fetchone()
+        refund_count = result[0] if result else 0
 
         # ✅ Calcul du risque
         risk_score = calculate_risk_score(refund_count, payment_method, user_ip, recent_purchases, multiple_accounts)
 
-        # ✅ Enregistrer dans `users`
+        # ✅ Insérer ou mettre à jour `users`
         cursor.execute("""
             INSERT INTO users (ip, user_agent, refund_count, risk_score, created_at)
             VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (ip) DO UPDATE
-            SET refund_count = users.refund_count, risk_score = %s, created_at = %s
-        """, (user_ip, user_agent, refund_count, risk_score, created_at, risk_score, created_at))
+            SET refund_count = users.refund_count, risk_score = EXCLUDED.risk_score, created_at = EXCLUDED.created_at
+        """, (user_ip, user_agent, refund_count, risk_score, created_at))
 
         db.commit()
         cursor.close()
@@ -88,7 +88,7 @@ def buy():
 
     return jsonify({"message": "Achat enregistré", "risk_score": risk_score})
 
-# ✅ Enregistrer une demande de remboursement
+# ✅ Enregistrer une demande de remboursement et mettre à jour `users`
 @app.route("/refund/<int:order_id>")
 def request_refund(order_id):
     db = get_db()
@@ -100,7 +100,8 @@ def request_refund(order_id):
         user_ip = cursor.fetchone()[0]
 
         cursor.execute("SELECT refund_count FROM users WHERE ip = %s", (user_ip,))
-        refund_count = cursor.fetchone()[0] + 1
+        result = cursor.fetchone()
+        refund_count = result[0] + 1 if result else 1
         risk_score = refund_count * 20
 
         cursor.execute("UPDATE users SET refund_count = %s, risk_score = %s WHERE ip = %s", (refund_count, risk_score, user_ip))
