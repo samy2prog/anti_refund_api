@@ -1,11 +1,11 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import psycopg2
 from datetime import datetime
 import os
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")
 
-# Connexion à la base de données
+# ✅ Connexion à la base de données
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://eshop_db_d9qc_user:6IoPk0zWxCmDL9EEQshbWrmK54bdfced@dpg-cv93lh1u0jms73eevl00-a.frankfurt-postgres.render.com/eshop_db_d9qc")
 
 def connect_db():
@@ -13,10 +13,15 @@ def connect_db():
         conn = psycopg2.connect(DATABASE_URL)
         return conn
     except Exception as e:
-        print(f"❌ ERREUR DE CONNEXION À POSTGRESQL : {e}")
+        print(f"❌ ERREUR CONNEXION DB : {e}")
         return None
 
-# ✅ Route pour enregistrer une commande
+# ✅ Servir les fichiers statiques (CSS, JS)
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    return send_from_directory(app.static_folder, filename)
+
+# ✅ Route Achat (BUY)
 @app.route("/buy", methods=["POST"])
 def buy():
     data = request.get_json()
@@ -33,7 +38,7 @@ def buy():
 
     conn = connect_db()
     if not conn:
-        return jsonify({"error": "Impossible de se connecter à la base de données"}), 500
+        return jsonify({"error": "Connexion DB impossible"}), 500
     
     cur = conn.cursor()
 
@@ -46,16 +51,15 @@ def buy():
         order_id = cur.fetchone()[0]
         conn.commit()
 
-        # ✅ Vérification si l'utilisateur existe déjà
+        # ✅ Vérification utilisateur
         cur.execute("SELECT id FROM users WHERE ip = %s", (ip_address,))
         user = cur.fetchone()
 
         if not user:
-            # ✅ Ajout d'un nouvel utilisateur
-            print(f"📊 Ajout utilisateur : IP={ip_address}, User-Agent={user_agent}, Payment={payment_method}")
+            # ✅ Création utilisateur si inexistant
             cur.execute(
                 "INSERT INTO users (ip, user_agent, fingerprint, refund_count, risk_score, created_at) VALUES (%s, %s, %s, %s, %s, NOW())",
-                (ip_address, user_agent, "default_fingerprint", 0, 10)  # Risk Score par défaut à 10
+                (ip_address, user_agent, "default_fingerprint", 0, 10)  # Risk Score 10 par défaut
             )
             conn.commit()
 
@@ -69,7 +73,7 @@ def buy():
         print(f"❌ ERREUR INSERTION : {e}")
         return jsonify({"error": str(e)}), 500
 
-# ✅ Route pour demander un remboursement
+# ✅ Route Remboursement (REFUND)
 @app.route("/refund", methods=["POST"])
 def refund():
     data = request.get_json()
@@ -80,7 +84,7 @@ def refund():
 
     conn = connect_db()
     if not conn:
-        return jsonify({"error": "Impossible de se connecter à la base de données"}), 500
+        return jsonify({"error": "Connexion DB impossible"}), 500
     
     cur = conn.cursor()
 
@@ -116,5 +120,7 @@ def dashboard():
 
     return render_template("dashboard.html", users=users)
 
+# ✅ Lancement avec gestion dynamique des ports pour éviter les erreurs 502
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))  # 🌍 Render et local support
+    app.run(host="0.0.0.0", port=port, debug=True)
