@@ -1,126 +1,100 @@
-from flask import Flask, request, jsonify, render_template, send_from_directory
+kkkimport os
 import psycopg2
-from datetime import datetime
-import os
+from flask import Flask, render_template, request, jsonify
 
-app = Flask(__name__, static_folder="static")
+app = Flask(__name__)
 
-# ✅ Connexion à la base de données
+# 📌 Connexion à PostgreSQL avec le bon lien
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://eshop_db_d9qc_user:6IoPk0zWxCmDL9EEQshbWrmK54bdfced@dpg-cv93lh1u0jms73eevl00-a.frankfurt-postgres.render.com/eshop_db_d9qc")
 
-def connect_db():
+def get_db():
+    """Connexion sécurisée à PostgreSQL"""
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         return conn
     except Exception as e:
-        print(f"❌ ERREUR CONNEXION DB : {e}")
+        print(f"❌ ERREUR CONNEXION : {e}")
         return None
 
-# ✅ Servir les fichiers statiques (CSS, JS)
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    return send_from_directory(app.static_folder, filename)
-
-# ✅ Route Achat (BUY)
-@app.route("/buy", methods=["POST"])
-def buy():
-    data = request.get_json()
-    product_name = data.get("product_name")
-    payment_method = data.get("payment_method")
-
-    if not product_name or not payment_method:
-        return jsonify({"error": "Données incomplètes"}), 400
-
-    ip_address = request.remote_addr  # ✅ Récupération IP
-    user_agent = request.headers.get("User-Agent", "Inconnu")
-
-    print(f"📡 IP récupérée : {ip_address} | User-Agent : {user_agent}")  # Debug
-
-    conn = connect_db()
-    if not conn:
-        return jsonify({"error": "Connexion DB impossible"}), 500
-    
-    cur = conn.cursor()
-
-    try:
-        # ✅ Enregistrement de la commande
-        cur.execute(
-            "INSERT INTO orders (product_name, ip, user_agent, payment_method, created_at) VALUES (%s, %s, %s, %s, NOW()) RETURNING id",
-            (product_name, ip_address, user_agent, payment_method)
-        )
-        order_id = cur.fetchone()[0]
-        conn.commit()
-
-        # ✅ Vérification utilisateur
-        cur.execute("SELECT id FROM users WHERE ip = %s", (ip_address,))
-        user = cur.fetchone()
-
-        if not user:
-            # ✅ Création utilisateur si inexistant
-            cur.execute(
-                "INSERT INTO users (ip, user_agent, fingerprint, refund_count, risk_score, created_at) VALUES (%s, %s, %s, %s, %s, NOW())",
-                (ip_address, user_agent, "default_fingerprint", 0, 10)  # Risk Score 10 par défaut
-            )
-            conn.commit()
-
-        cur.close()
-        conn.close()
-
-        return jsonify({"message": "Commande enregistrée avec succès", "order_id": order_id}), 201
-
-    except Exception as e:
-        conn.rollback()
-        print(f"❌ ERREUR INSERTION : {e}")
-        return jsonify({"error": str(e)}), 500
-
-# ✅ Route Remboursement (REFUND)
-@app.route("/refund", methods=["POST"])
-def refund():
-    data = request.get_json()
-    order_id = data.get("order_id")
-
-    if not order_id:
-        return jsonify({"error": "ID de commande manquant"}), 400
-
-    conn = connect_db()
-    if not conn:
-        return jsonify({"error": "Connexion DB impossible"}), 500
-    
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            "INSERT INTO refunds (order_id, status, created_at) VALUES (%s, 'En attente', NOW())",
-            (order_id,)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        return jsonify({"message": "Remboursement demandé avec succès"}), 201
-
-    except Exception as e:
-        conn.rollback()
-        print(f"❌ ERREUR REMBOURSEMENT : {e}")
-        return jsonify({"error": str(e)}), 500
-
-# ✅ Route du Dashboard
+# 📌 Route principale : Affichage du Dashboard
 @app.route("/dashboard")
 def dashboard():
-    conn = connect_db()
-    if not conn:
-        return "Erreur de connexion à la base de données", 500
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Connexion à la base de données impossible"}), 500
 
     cur = conn.cursor()
-    cur.execute("SELECT * FROM users ORDER BY created_at DESC")
+    cur.execute("""
+        SELECT id, ip, user_agent, fingerprint, refund_count, risk_score, created_at
+        FROM users ORDER BY created_at DESC
+    """)
     users = cur.fetchall()
-
     cur.close()
     conn.close()
 
     return render_template("dashboard.html", users=users)
 
-# ✅ Lancement avec gestion dynamique des ports pour éviter les erreurs 502
+# 📌 Ajout d'un utilisateur suspect lors d'une transaction
+def insert_user(ip, user_agent, fingerprint, refund_count, risk_score):
+    conn = get_db()
+    if conn is None:
+        return
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO users (ip, user_agent, fingerprint, refund_count, risk_score, created_at)
+            VALUES (%s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (fingerprint) DO UPDATE
+            SET refund_count = users.refund_count + 1,
+                risk_score = users.risk_score + 10
+            RETURNING id
+        """, (ip, user_agent, fingerprint, refund_count, risk_score))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"❌ ERREUR INSERTION UTILISATEUR : {e}")
+
+# 📌 Route pour enregistrer un remboursement
+@app.route("/refund", methods=["POST"])
+def request_refund():
+    if request.content_type != "application/json":
+        return jsonify({"error": "Le Content-Type doit être 'application/json'"}), 415
+
+    data = request.get_json()
+    order_id = data.get("order_id")
+
+    if not order_id:
+        return jsonify({"error": "Données invalides"}), 400
+
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Connexion à la base de données impossible"}), 500
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO refunds (order_id, status, created_at)
+            VALUES (%s, 'En attente', NOW()) RETURNING id
+        """, (order_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"message": "Remboursement demandé avec succès"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# 📌 Vérification de la connexion PostgreSQL
+@app.route("/test-db")
+def test_db():
+    conn = get_db()
+    if conn:
+        return jsonify({"message": "Connexion PostgreSQL réussie"}), 200
+    else:
+        return jsonify({"error": "Connexion impossible"}), 500
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # 🌍 Render et local support
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
